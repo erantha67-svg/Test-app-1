@@ -1,0 +1,7 @@
+{
+  "name": "Lumina Photo Editor",
+  "description": "A professional-grade, iOS-inspired photo editor with offline filters, adjustments, and AI-powered magic tools.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
