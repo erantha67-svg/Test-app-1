@@ -20,7 +20,9 @@ import {
   X,
   Check,
   Camera,
-  Plus
+  Plus,
+  Eraser,
+  Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -91,8 +93,12 @@ export default function App() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [isProcessing, setIsProcessing] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [aiBlurIntensity, setAiBlurIntensity] = useState(50);
   const [exportQuality, setExportQuality] = useState<'low' | 'medium' | 'high'>('high');
+  const [exportFormat, setExportFormat] = useState<'jpg' | 'png'>('jpg');
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState(20);
+  const [showSettings, setShowSettings] = useState(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -327,8 +333,13 @@ export default function App() {
   };
 
   const saveToHistory = () => {
-    const newHistory = history.slice(0, historyIndex + 1);
+    let newHistory = history.slice(0, historyIndex + 1);
     newHistory.push({ ...adjustments });
+    
+    if (newHistory.length > historyLimit) {
+      newHistory = newHistory.slice(newHistory.length - historyLimit);
+    }
+    
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
   };
@@ -361,8 +372,11 @@ export default function App() {
     if (!ctx) return;
 
     // Fill background for JPEG
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+    if (exportFormat === 'jpg') {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+    }
+    
     ctx.drawImage(canvas, 0, 0);
     ctx.drawImage(drawCanvas, 0, 0);
 
@@ -370,16 +384,17 @@ export default function App() {
     const quality = qualityMap[exportQuality];
 
     const link = document.createElement('a');
-    link.download = `lumina-edit-${exportQuality}.jpg`;
-    link.href = tempCanvas.toDataURL('image/jpeg', quality);
+    link.download = `lumina-edit-${exportQuality}.${exportFormat}`;
+    link.href = tempCanvas.toDataURL(exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', exportFormat === 'jpg' ? quality : undefined);
     link.click();
     setShowExportMenu(false);
   };
 
   // --- AI Tools ---
 
-  const handleAiEdit = async () => {
-    if (!aiPrompt || !image) return;
+  const handleAiEdit = async (customPrompt?: string) => {
+    const prompt = customPrompt || aiPrompt;
+    if (!prompt || !image) return;
     setIsProcessing(true);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -388,7 +403,7 @@ export default function App() {
         contents: {
           parts: [
             { inlineData: { data: image.split(',')[1], mimeType: 'image/png' } },
-            { text: aiPrompt },
+            { text: prompt },
           ],
         },
       });
@@ -410,7 +425,7 @@ export default function App() {
       console.error("AI Edit failed:", error);
     } finally {
       setIsProcessing(false);
-      setAiPrompt('');
+      if (!customPrompt) setAiPrompt('');
     }
   };
 
@@ -441,6 +456,13 @@ export default function App() {
             active={historyIndex < history.length - 1} 
             tooltip="Redo (Ctrl+Y)"
           />
+
+          <IconButton 
+            icon={Settings} 
+            onClick={() => setShowSettings(!showSettings)} 
+            active={showSettings}
+            tooltip="Settings"
+          />
           
           <div className="relative">
             <button
@@ -452,6 +474,45 @@ export default function App() {
             </button>
 
             <AnimatePresence>
+              {showSettings && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                  className="absolute top-full right-0 mt-2 w-64 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl p-4 z-[60]"
+                >
+                  <div className="flex items-center justify-between mb-4 pb-2 border-b border-zinc-800">
+                    <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Preferences</span>
+                    <button onClick={() => setShowSettings(false)} className="text-zinc-500 hover:text-white">
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+                        <span>History Depth</span>
+                        <span className="text-blue-500">{historyLimit} steps</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="5"
+                        max="100"
+                        step="5"
+                        value={historyLimit}
+                        onChange={(e) => setHistoryLimit(Number(e.target.value))}
+                        className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                      />
+                      <p className="text-[9px] text-zinc-600 leading-relaxed font-medium">
+                        Limit the number of undo/redo steps stored in memory. Higher values use more RAM.
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
               {showExportMenu && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.9, y: 10 }}
@@ -459,6 +520,24 @@ export default function App() {
                   exit={{ opacity: 0, scale: 0.9, y: 10 }}
                   className="absolute top-full right-0 mt-2 w-48 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl p-2 z-[60]"
                 >
+                  <div className="px-3 py-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-zinc-800 mb-1">
+                    Format
+                  </div>
+                  <div className="flex gap-1 p-1 bg-zinc-950 rounded-xl mb-2">
+                    {(['jpg', 'png'] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setExportFormat(f)}
+                        className={cn(
+                          "flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                          exportFormat === f ? "bg-zinc-800 text-white shadow-lg" : "text-zinc-500 hover:text-zinc-300"
+                        )}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className="px-3 py-2 text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-zinc-800 mb-1">
                     Quality
                   </div>
@@ -745,10 +824,95 @@ export default function App() {
               )}
 
               {activeTool === 'ai' && (
-                <div className="px-6 space-y-5">
+                <div className="px-6 space-y-6 overflow-y-auto max-h-[60vh] no-scrollbar pb-10">
+                  {/* Portrait Blur Section */}
+                  <div className="p-5 bg-zinc-900/50 border border-zinc-800 rounded-3xl space-y-4">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-green-500/10 rounded-xl">
+                        <SlidersHorizontal size={20} className="text-green-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-black uppercase tracking-widest text-white">Portrait Blur</h3>
+                        <p className="text-[10px] text-zinc-500 font-medium">AI-powered depth effect</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <Slider 
+                        label="Blur Intensity" 
+                        value={aiBlurIntensity} 
+                        min={0} 
+                        max={100} 
+                        onChange={setAiBlurIntensity} 
+                        onReset={() => setAiBlurIntensity(50)} 
+                      />
+                      
+                      <button
+                        onClick={() => {
+                          let intensityDesc = "moderate";
+                          if (aiBlurIntensity < 25) intensityDesc = "very subtle";
+                          else if (aiBlurIntensity < 45) intensityDesc = "subtle";
+                          else if (aiBlurIntensity < 70) intensityDesc = "moderate";
+                          else if (aiBlurIntensity < 90) intensityDesc = "strong";
+                          else intensityDesc = "extreme";
+                          
+                          handleAiEdit(`Apply a ${intensityDesc} professional portrait background blur to this image. Keep the main subject in perfectly sharp focus while creating a beautiful bokeh effect in the background. The blur level should be ${aiBlurIntensity}% intensity.`);
+                        }}
+                        disabled={isProcessing}
+                        className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-2xl font-black text-[10px] tracking-widest uppercase transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-green-500/10"
+                      >
+                        {isProcessing ? "Processing..." : "Apply Portrait Blur"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Quick Actions */}
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Other Magic Tools</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => handleAiEdit("Remove the background from this image and make it transparent. Return only the subject with a transparent background.")}
+                        disabled={isProcessing}
+                        className="py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                      >
+                        <Eraser size={18} className="text-blue-400" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Remove BG</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAiPrompt("Replace the background with: ");
+                          const textarea = document.querySelector('textarea');
+                          if (textarea) textarea.focus();
+                        }}
+                        disabled={isProcessing}
+                        className="py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                      >
+                        <ImageIcon size={18} className="text-pink-400" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Change BG</span>
+                      </button>
+                      <button
+                        onClick={() => handleAiEdit("Enhance this photo for professional quality. Improve lighting, colors, and sharpness.")}
+                        disabled={isProcessing}
+                        className="py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                      >
+                        <Sparkles size={18} className="text-purple-400" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Enhance</span>
+                      </button>
+                      <button
+                        onClick={() => handleAiEdit("Make this photo look like a professional studio portrait with high-end lighting and skin retouching.")}
+                        disabled={isProcessing}
+                        className="py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                      >
+                        <Camera size={18} className="text-orange-400" />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Studio</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Custom Prompt */}
                   <div className="flex flex-col gap-3">
                     <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">AI Magic Prompt</label>
+                      <label className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Custom Magic Prompt</label>
                       <Sparkles size={14} className="text-purple-500 animate-pulse" />
                     </div>
                     <textarea
@@ -759,7 +923,7 @@ export default function App() {
                     />
                   </div>
                   <button
-                    onClick={handleAiEdit}
+                    onClick={() => handleAiEdit()}
                     disabled={!aiPrompt || isProcessing}
                     className="w-full py-4 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 rounded-2xl font-black text-sm shadow-xl shadow-purple-500/20 active:scale-[0.98] transition-all disabled:opacity-30 disabled:grayscale tracking-widest uppercase"
                   >
